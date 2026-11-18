@@ -239,6 +239,9 @@ static float rem_scroll_x = 0.0f;
 static int two_finger_scroll_mode = 0;
 static int hold_and_drag_mode = 0;
 static int hold_anchor_slot = -1;
+/* Set when the hold finger lifts while the drag finger stays: the remaining
+ * finger keeps moving the cursor freely (LMB already released). */
+static int post_hold_free = 0;
 static int64_t two_finger_start_ms = 0;
 static int last_mid_x = 0;
 static int last_mid_y = 0;
@@ -454,6 +457,7 @@ static void apply_touch_grab_now(int enable) {
         hold_and_drag_mode = 0;
         hold_anchor_slot = -1;
         two_finger_scroll_mode = 0;
+        post_hold_free = 0;
     }
 
     if (enable && !is_grabbed) {
@@ -951,6 +955,7 @@ static void process_touch_frame_syn(void) {
             if (d0_anchor_sq > scroll_thresh_sq && d1_anchor_sq > scroll_thresh_sq &&
                 same_dir && comparable) {
                 two_finger_scroll_mode = 1;
+                post_hold_free = 0;
                 last_mid_x = (s0->anchor_x + s1->anchor_x) / 2;
                 last_mid_y = (s0->anchor_y + s1->anchor_y) / 2;
                 rem_scroll_x = 0.0f;
@@ -960,6 +965,7 @@ static void process_touch_frame_syn(void) {
             } else if (hold_ready &&
                        d0_anchor_sq <= hold_still_sq && d1_anchor_sq > (40 * 40)) {
                 hold_and_drag_mode = 1;
+                post_hold_free = 0;
                 hold_anchor_slot = idx0;
                 s0->moved_beyond_tap = 1;
                 s1->moved_beyond_tap = 1;
@@ -967,6 +973,7 @@ static void process_touch_frame_syn(void) {
             } else if (hold_ready &&
                        d1_anchor_sq <= hold_still_sq && d0_anchor_sq > (40 * 40)) {
                 hold_and_drag_mode = 1;
+                post_hold_free = 0;
                 hold_anchor_slot = idx1;
                 s0->moved_beyond_tap = 1;
                 s1->moved_beyond_tap = 1;
@@ -979,6 +986,7 @@ static void process_touch_frame_syn(void) {
                 hold_anchor_slot = -1;
                 emit_single_with_syn(uinput_fd, EV_KEY, BTN_LEFT, 0);
                 two_finger_scroll_mode = 1;
+                post_hold_free = 0;
                 last_mid_x = mid_x;
                 last_mid_y = mid_y;
                 rem_scroll_x = 0.0f;
@@ -1031,7 +1039,7 @@ static void process_touch_frame_syn(void) {
             if (idx != hold_anchor_slot) {
                 emit_scaled_move(raw_dx, raw_dy);
             }
-        } else if (gesture_max_fingers == 1) {
+        } else if (gesture_max_fingers == 1 || post_hold_free) {
             int dist_from_down_sq = dist_sq(s->screen_x, s->screen_y, s->down_x, s->down_y);
             if (dist_from_down_sq > (24 * 24)) {
                 s->moved_beyond_tap = 1;
@@ -1062,6 +1070,7 @@ static void process_touch_frame_syn(void) {
                 if (hold_and_drag_mode && (i == hold_anchor_slot || hold_anchor_slot == -1)) {
                     hold_and_drag_mode = 0;
                     hold_anchor_slot = -1;
+                    post_hold_free = 1;
                     emit_single_with_syn(uinput_fd, EV_KEY, BTN_LEFT, 0);
                     for (int k = 0; k < MAX_SLOTS; k++) {
                         if (slots[k].active) {
@@ -1091,7 +1100,7 @@ static void process_touch_frame_syn(void) {
             emit_single_with_syn(uinput_fd, EV_KEY, BTN_LEFT, 0);
         }
 
-        if (gesture_max_fingers == 2 && !two_finger_scroll_mode &&
+        if (gesture_max_fingers == 2 && !two_finger_scroll_mode && !post_hold_free &&
             !gesture_moved_too_far && gesture_dur < 260) {
             /* 2-Finger Tap -> Right Click */
             emit_single_with_syn(uinput_fd, EV_KEY, BTN_RIGHT, 1);
@@ -1104,6 +1113,7 @@ static void process_touch_frame_syn(void) {
         }
 
         two_finger_scroll_mode = 0;
+        post_hold_free = 0;
         gesture_max_fingers = 0;
 
         if (pending_hide_overlay && all_active_fingers == 0) {

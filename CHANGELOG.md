@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented in this file.
 
+## [v1.3.2] - 2026-11-18
+### Fixed
+- **Hold-and-drag cursor continuity**: Releasing the held anchor finger now drops `BTN_LEFT` and lets the remaining moving finger continue controlling the cursor seamlessly without requiring you to lift and re-touch.
+
 ## [v1.3.1] - 2026-11-18
 ### Fixed
 - **2-finger scroll vs. hold-and-drag conflict**: Scrolling now requires both fingers to move in the same direction with comparable distance, and a finger that was already resting (>=150 ms) before the second lands is treated as a hold anchor, so its jitter no longer locks scroll mode. Hold-and-drag engages immediately in that case.
