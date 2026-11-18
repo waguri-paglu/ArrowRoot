@@ -67,9 +67,11 @@ object RootMouseController {
     @Volatile private var callbackSocket: DatagramSocket? = null
     @Volatile private var imeMonitorProcess: Process? = null
     private val executor = Executors.newCachedThreadPool()
+    /** Serializes start/stop so an async killall can never hit a freshly started daemon. */
+    private val lifecycleExecutor = Executors.newSingleThreadExecutor()
 
     var onStateChanged: ((DriverState, String) -> Unit)? = null
-    var onDaemonEvent: ((Int) -> Unit)? = null
+    var onDaemonEvent: ((Int, Int, Int) -> Unit)? = null
     var onImeVisibilityChanged: ((Boolean) -> Unit)? = null
 
     fun isRootAvailable(): Boolean {
@@ -103,10 +105,18 @@ object RootMouseController {
             return
         }
 
-        if (isStarting) return
+        if (isStarting) {
+            // Another start is in flight: report its outcome instead of dropping the callback.
+            executor.execute {
+                val deadline = SystemClock.uptimeMillis() + 8000L
+                while (isStarting && SystemClock.uptimeMillis() < deadline) Thread.sleep(50)
+                onResult(isRunning, if (isRunning) null else "Driver failed to start")
+            }
+            return
+        }
         isStarting = true
 
-        executor.execute {
+        lifecycleExecutor.execute {
             try {
                 notifyState(DriverState.CHECKING_ROOT, "Verifying superuser access...")
                 if (!isRootAvailable()) {
@@ -189,13 +199,19 @@ object RootMouseController {
             try {
                 val sock = DatagramSocket(29877, InetAddress.getByName("127.0.0.1"))
                 callbackSocket = sock
-                val buf = ByteArray(4)
+                val buf = ByteArray(12)
                 val pkt = DatagramPacket(buf, buf.size)
-                while (isRunning && !sock.isClosed) {
-                    sock.receive(pkt)
-                    if (pkt.length == 4 && pkt.address.isLoopbackAddress) {
-                        val eventCode = ByteBuffer.wrap(buf).order(ByteOrder.LITTLE_ENDIAN).int
-                        onDaemonEvent?.invoke(eventCode)
+                sock.use {
+                    while (isRunning && !sock.isClosed) {
+                        pkt.length = buf.size
+                        sock.receive(pkt)
+                        if ((pkt.length == 4 || pkt.length == 12) && pkt.address.isLoopbackAddress) {
+                            val bb = ByteBuffer.wrap(buf, 0, pkt.length).order(ByteOrder.LITTLE_ENDIAN)
+                            val eventCode = bb.int
+                            val a = if (pkt.length == 12) bb.int else 0
+                            val b = if (pkt.length == 12) bb.int else 0
+                            onDaemonEvent?.invoke(eventCode, a, b)
+                        }
                     }
                 }
             } catch (ignored: Exception) {}
@@ -268,7 +284,7 @@ object RootMouseController {
             imeMonitorProcess = null
         } catch (ignored: Exception) {}
 
-        executor.execute {
+        lifecycleExecutor.execute {
             try {
                 Runtime.getRuntime().exec(
                     arrayOf(

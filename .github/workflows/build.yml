@@ -68,7 +68,8 @@ jobs:
           ZIPALIGN="$BUILD_TOOLS_DIR/zipalign"
           APKSIGNER="$BUILD_TOOLS_DIR/apksigner"
 
-          OUT_NAME="Arrowroot-v1.3.0-build-${{ github.run_number }}.apk"
+          VERSION=$(grep -m1 versionName app/build.gradle | sed -E 's/.*"(.*)".*/\1/')
+          OUT_NAME="Arrowroot-v${VERSION}-build-${{ github.run_number }}.apk"
           OUT_PATH="app/build/outputs/apk/$OUT_NAME"
 
           "$ZIPALIGN" -p -f -v 4 "$RAW_APK" "$OUT_PATH.aligned"
@@ -94,53 +95,26 @@ jobs:
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Arrowroot-v1.3.0-build-${{ github.run_number }}
+          name: ${{ steps.apk.outputs.apk_name }}
           path: ${{ steps.apk.outputs.apk_path }}
 
-      - name: Determine Release Tag
-        id: release_info
+      - name: Extract Release Notes
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            TAG="${GITHUB_REF#refs/tags/}"
-          else
-            TAG="v1.3.0"
-          fi
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          TAG="${GITHUB_REF#refs/tags/}"
+          awk -v t="[$TAG]" 'index($0,"## "t)==1{f=1;next} /^## \[/{if(f)exit} f' CHANGELOG.md > release_notes.md
+          printf '\n---\nAPK: `%s`\n' "${{ steps.apk.outputs.apk_name }}" >> release_notes.md
+          cat release_notes.md
 
-      - name: Create or Update GitHub Release
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ steps.apk.outputs.apk_path }}
-          name: "Arrowroot ${{ steps.release_info.outputs.tag }} (Build #${{ github.run_number }})"
-          tag_name: ${{ steps.release_info.outputs.tag }}
+          name: "Arrowroot ${{ github.ref_name }}"
+          tag_name: ${{ github.ref_name }}
+          body_path: release_notes.md
           draft: false
           prerelease: false
-          body: |
-            ## Arrowroot v1.3.0 (Build #${{ github.run_number }}) — Rebrand, Security Hardening & Pro UI Overhaul 🏹🌱
-
-            👉 **Download the latest verified APK**: **`${{ steps.apk.outputs.apk_name }}`**
-
-            ---
-
-            ### 🚀 What's New in v1.3.0 (Changelog)
-
-            #### 🏹 Rebranded to **Arrowroot** + Adaptive App Icon
-            - **New Brand Identity**: Renamed from *Virtual Mouse* to **Arrowroot** (*Arrow* cursor + *Root* kernel driver) with a custom adaptive launcher icon across all `mipmap-*` densities (`mdpi` to `xxxhdpi` + `anydpi-v26`) and a monochrome vector icon for the Quick Settings tile and status bar.
-
-            #### 🔒 Kernel & IPC Security Hardening
-            - **Session-Authenticated Loopback IPC**: Added a per-session 32-bit cryptographic token (`SecureRandom`) shared between `RootMouseController` and `vmouse_daemon` with a mutex-protected JNI socket bridge, preventing unauthorized local apps from injecting mouse events or grabbing the screen.
-            - **Eliminated World-Writable `/dev/uinput`**: Removed `chmod 666 /dev/uinput`; the root daemon opens `/dev/uinput` directly with `0700` root-only binary permissions.
-            - **Async-Signal-Safe Daemon Shutdown**: Replaced unsafe `cleanup_device()` calls inside the signal handler with a `sig_atomic_t` flag and graceful `SIGTERM` teardown so `EVIOCGRAB` and `/dev/uinput` always release cleanly.
-
-            #### 🎨 Professional Material 3 UI & UX Upgrade
-            - **Upgraded Home Dashboard**: Live mode badge (`IDLE`, `TRACKPAD MODE`, `TOUCH MODE`, `TOUCH • KEYBOARD`), one-tap **Swap Mode** and **Center Dock** quick actions, and a 3-column **System Diagnostics** grid (`Superuser`, `Kernel uinput`, `Overlay`).
-            - **Refined Floating Overlay Dock**: Persistent dock coordinates across restarts, screen-bounds clamping on rotation, double-tap grip to center, and exact pixel-aligned dock hit zones (`classify_dock_zone`).
-            - **Start on Boot & Settings Reset**: Wired up `BootReceiver` to a new **Start on Boot** preference toggle and added one-tap **Reset All Settings to Default**.
-
-            #### 🐛 Bug Fixes
-            - Fixed `initImeSensorWindow()` not being invoked in `OverlayService.onCreate()` and cleaned up `imeSensorView` in `onDestroy()` to prevent window leaks.
-            - Fixed orphaned root `su` polling shell in `startRootImeMonitor()` by tying its loop to the `vmouse_daemon` PID lifecycle.
-            - Fixed cursor jump on 2-finger right-click and 3-finger mode-swap taps when one finger lifts slightly before the others.
-            - Fixed `INPUT_PROP_DIRECT` touchscreen selection in `open_touchscreen_device()`.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

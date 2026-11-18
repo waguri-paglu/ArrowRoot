@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [v1.3.1] - 2026-11-18
+### Fixed
+- **2-finger scroll vs. hold-and-drag conflict**: Scrolling now requires both fingers to move in the same direction with comparable distance, and a finger that was already resting (>=150 ms) before the second lands is treated as a hold anchor, so its jitter no longer locks scroll mode. Hold-and-drag engages immediately in that case.
+- **Dock buttons no longer break trackpad gestures**: Fingers resting on L/R/Mode/Hide are excluded from gesture finger counts — holding L while moving the cursor works, no false right-clicks, cursor resumes after the hold-and-drag anchor lifts.
+- **Drag dock grip in Trackpad mode**: Grip-zone drags are now forwarded from the daemon to the app (`CB_DOCK_MOVE` / `CB_DOCK_DROP`) and the dock position is saved.
+- **Mode / Hide buttons fire on release** instead of on touch-down, and only once all fingers lift.
+- **Stuck buttons**: `BTN_LEFT`/`BTN_RIGHT` and hold/scroll state are released on every mode change.
+- **RTL layouts**: Dock forced to LTR so daemon hit zones always match the buttons.
+- **Daemon robustness**: Handles `POLLERR`/`POLLHUP` (no more CPU spin at `SCHED_FIFO`), resyncs after `SYN_DROPPED`, ignores out-of-range MT slots safely, respects `nohup`'s ignored `SIGHUP`.
+- **Lifecycle**: start/stop are serialized (async `killall` can no longer kill a fresh daemon); concurrent `startAsync` callers now get a result; callback socket is closed and packet length reset; `MainActivity` no longer leaks via `onStateChanged`; delayed grab re-checks state; `addView` failures handled.
+- **UI**: Dock clamp accounts for dock size; tablet default sensitivity consistent (1.6); status bar icons readable in light theme; Android 13+ notification permission requested.
+
+### Security
+- Daemon now **fails closed**: refuses to start without `ARROWROOT_TOKEN` and rejects packets with a zero token; removed the `--token` argv option (visible in `ps`).
+
+### CI
+- Releases are created only on tag pushes (pushes to `main` no longer overwrite the latest release); APK name and release notes are derived from `versionName` and this changelog.
+
 ## [v1.3.0] - 2026-11-04
 ### Added
 - **Rebranded to Arrowroot**: New identity (*Arrow* cursor + *Root* kernel access), custom adaptive launcher icons (`mipmap-mdpi` through `mipmap-xxxhdpi` and `mipmap-anydpi-v26`), and monochrome vector icons for Quick Settings and notifications.

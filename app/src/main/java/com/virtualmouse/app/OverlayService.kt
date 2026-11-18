@@ -108,7 +108,7 @@ class OverlayService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             }
         }
 
-        RootMouseController.onDaemonEvent = { eventCode ->
+        RootMouseController.onDaemonEvent = { eventCode, argA, argB ->
             mainHandler.post {
                 when (eventCode) {
                     0 -> { // CB_MODE_TOUCH
@@ -119,6 +119,22 @@ class OverlayService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                         isTrackpadActive = true
                         pausedByKeyboard = false
                         updateDockUiState(true)
+                    }
+                    3 -> { // CB_DOCK_MOVE (grip dragged while trackpad grabs touch)
+                        controlsView?.let { v ->
+                            controlsLayoutParams.x += argA
+                            controlsLayoutParams.y -= argB // gravity is BOTTOM
+                            clampDockCoordinates()
+                            try { windowManager.updateViewLayout(v, controlsLayoutParams) } catch (ignored: Exception) {}
+                            syncDaemonConfigAndBounds()
+                        }
+                    }
+                    4 -> { // CB_DOCK_DROP
+                        prefs.edit()
+                            .putInt("dock_x", controlsLayoutParams.x)
+                            .putInt("dock_y", controlsLayoutParams.y)
+                            .apply()
+                        controlsView?.post { syncDaemonConfigAndBounds() }
                     }
                     2 -> { // CB_HIDE_OVERLAY
                         prefs.edit().putBoolean("show_dock", false).apply()
@@ -151,7 +167,7 @@ class OverlayService : Service(), SharedPreferences.OnSharedPreferenceChangeList
     }
 
     private fun loadPreferences() {
-        sensitivity = prefs.getFloat("sensitivity", 1.4f)
+        sensitivity = prefs.getFloat("sensitivity", if (resources.configuration.smallestScreenWidthDp >= 600) 1.6f else 1.4f)
         scrollSensitivity = prefs.getFloat("scroll_sensitivity", 0.5f)
         showFloatingDock = prefs.getBoolean("show_dock", true)
         autoKeyboardSwitch = prefs.getBoolean("auto_ime_switch", true)
@@ -270,8 +286,10 @@ class OverlayService : Service(), SharedPreferences.OnSharedPreferenceChangeList
     }
 
     private fun clampDockCoordinates() {
-        val maxX = (screenWidth / 2) - 40
-        val maxY = (screenHeight - 160).coerceAtLeast(120)
+        val viewW = controlsView?.width?.takeIf { it > 0 } ?: 80
+        val viewH = controlsView?.height?.takeIf { it > 0 } ?: 160
+        val maxX = ((screenWidth - viewW) / 2).coerceAtLeast(0)
+        val maxY = (screenHeight - viewH).coerceAtLeast(120)
         controlsLayoutParams.x = controlsLayoutParams.x.coerceIn(-maxX, maxX)
         controlsLayoutParams.y = controlsLayoutParams.y.coerceIn(24, maxY)
     }
@@ -295,6 +313,7 @@ class OverlayService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         updateDockUiState(targetGrab)
         if (targetGrab) {
             mainHandler.postDelayed({
+                if (!isTrackpadActive) return@postDelayed
                 syncDaemonConfigAndBounds()
                 RootMouseController.setTouchGrab(true)
             }, 140L)
@@ -479,7 +498,13 @@ class OverlayService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             }
         })
 
-        windowManager.addView(controlsView, controlsLayoutParams)
+        try {
+            windowManager.addView(controlsView, controlsLayoutParams)
+        } catch (e: Exception) {
+            android.util.Log.e("OverlayService", "Failed to add dock overlay", e)
+            controlsView = null
+            return
+        }
         controlsView?.post {
             syncDaemonConfigAndBounds()
         }
